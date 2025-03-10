@@ -1,0 +1,158 @@
+\documentclass[10pt]{article}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{listings}
+\usepackage[a4paper, total={150mm, 237mm}]{geometry}
+\usepackage{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage[ngerman]{babel}
+\usepackage[T1]{fontenc}
+\usepackage{tabularx}
+\usepackage{float}
+\begingroup\linespread{1.3}
+\usepackage{multicol}
+\usepackage{minted}
+\usemintedstyle{friendly} % Change theme
+\usepackage{caption}
+
+
+\begin{document}
+
+%\renewcommand\thesection{\ifnum\value{section}<5\Roman{section}\else\arabic{section}\fi}
+\renewcommand\thesection{\Roman{section}}
+\pagenumbering{Roman}
+\begin{titlepage}
+    \begin{center}
+        \begin{multicols}{2}
+            \includegraphics[scale=.3]{dateien/THI_Logo.jpg} \\
+            \vspace{0.5cm}
+            Technische Hochschule Ingolstadt\\
+            \columnbreak
+            \includegraphics[scale=.2]{dateien/EXP Logo.png} \\
+            \vspace{1.5cm}
+            EXP Software GmbH\\
+        \end{multicols}
+        \vspace{1cm}
+        \normalsize
+        Andreas Dinauer\\
+        and2925@thi.de\\
+        
+        \vspace*{0.5cm}
+        \LARGE
+        \textbf{Konzeption und Entwicklung eines Systems zum Aufbau eines Wissensgraphen aus einem Jira-System}
+            
+        \vspace{1cm}
+        \normalsize
+        Erstprüfer/-in: Prof. Dr. Hans-Michael Windisch \\
+        Zweitprüfer/-in: Prof. Dr. Beate Navarro Bullock \\
+        \vspace{1cm}
+        \normalsize
+        Externer Partner: EXP Software GmbH
+            
+    \end{center}
+\end{titlepage}
+
+\newpage
+
+\section{Inhaltsverzeichnis}
+
+\renewcommand{\contentsname}{}
+\tableofcontents
+\newpage
+\section{Abkürzungsverzeichnis}
+\newpage
+\section{Abbildungsverzeichnis}
+\renewcommand{\listfigurename}{}
+\listoffigures
+\newpage
+\section{Tabellenverzeichnis}
+\renewcommand{\listtablename}{}
+\listoftables{}
+\newpage
+\setcounter{section}{0}
+\renewcommand\thesection{\arabic{section}}
+\pagenumbering{arabic}
+\include{kapitel1}
+\include{kapitel2}
+\include{kapitel3}
+\include{kapitel4}
+\section{Implementierung und Testen}
+\subsection{Implementierung der Extraktor-Komponente}
+\subsubsection{Extraktion der Daten}
+Die Extraktion beginnt bei Ausführung der Anwendung. Dafür muss eine Methode im Quarkus Framework konfiguriert werden. Die folgende Klasse dient mit der Methode mit der Singatur \glqq public void run()\grqq\: den Einstiegspunkt unserer Anwendung. Um eine Methode bei Initialisierung einer Java Bean zu Ausführung zu bringen muss diese mit der Annotation \glqq PostConstruct\grqq\: versehen werden. Des weiteren muss diese Methode Teil einer Klasse sein, welche als Java Bean definiert ist und somit die Annotation \glqq ApplicationScoped\grqq\: besitzt. Die Annotation \glqq Startup\grqq\: bestimmt, dass die Java Bean beim Start der Anwendung sofort initialisert wird und nicht wartet, bis diese von einer anderen Klasse verwendet wird: [ZITAT]
+\begin{minted}{java}
+    @Startup
+    @ApplicationScoped
+    public class Extraktor {
+        @PostConstruct
+        public void run() {
+            // Run code on startup here
+        }
+    }
+\end{minted}
+Der Extraktor soll kaskadenartig vorgehen. In einem Jira-Projekt stehen viele Objekttypen mit einer 1:n Kardinalität in Verbindung (z.B Projekt und Issue oder Issue und Kommentar). Der Extraktor beginnt mit dem höchsten Objekt in der Hierarchie also einem Jira Projekt und arbeitet sich schrittweise durch alle Objekttypen. Zunächst werden für ein Jira Projekt alle relevanten Vorgänge ermittelt und extrahiert. Diese Vorgänge wiederum stehen in Beziehung mit weiteren Objekttypen, welche anschließend ebenfalls extrahiert werden. Dabei sind Felder, Kommentare, Anhänge oder die Historie des Vorgangs relevant. Außerdem soll zu jedem Vorgang auch der Vorgangstyp extrahiert werden, welcher meist die Art des Vorgangs beschreibt. Ein Vorgangstyp Bug beispielsweise verdeutlicht, dass dieser Vorgang existiert, um ein bestehendes Problem zu lösen. [ZITAT].\\
+Zu Beginn des Extraktionsprozesses wird die bereitgestellte Konfiguration eingelesen. Wir benutzen hierfür die Guava Library von Google. Der Pfad, an welchem sich die Datei befindet wird mittels der Annotation \glqq ConfigProperty\grqq\: als Attribut unserer Klasse eingebracht.
+\begin{minted}{java}
+    @ConfigProperty(name = "extractor.config.location")
+    String pathToConfig;
+    
+    @PostConstruct
+    public void run() {
+        String config = File.asCharSource(new File(pathToConfig), 
+            StandardCharsets.UTF_8).read();
+        for(Map<String, List<String>> project : config) {
+            // Extraction process for a Jira Project goes here.
+        }
+    }
+\end{minted}
+Bei Beginn der Extraktion muss zuerst der Zeitraum bestimmt werden, für welche die Änderungen extrahiert werden. Der Beginn dieses Zeitraums entspricht dem Zeitstempel der zuletzt durchgeführten Extraktion. Der Zeitraum der letzten Extraktion kann aus der Metadaten-Datenbank ermittelt werden. Existiert noch keine Extraktion aus der Vergangenheit, so soll der Startzeitpunkt der Unix-Time herangezogen werden. Dieser entspricht dem 1. Januar 1970 um 0:00 Uhr [ZITAT]. Demnach führen wir in diesem Fall eine vollständige Extraktion der Daten durch. Hierfür nutzen wir eine eigens erstellte Klasse, welche eine Periode, im Gegensatz zur Klasse java.time.Period, durch das Speichern von zwei Zeitstempel implementiert. Wie folgt wird eine neue Periode ermittelt:
+\begin{minted}{java}
+    public void getPeriod() {
+        Optional<Period> period = periodRepository.findLatest();
+        ZonedDateTime now = ZonedDateTime.now(ZoneId.UTC);
+        if(period.isPresent()) {
+            return new Period(period.get().from(), now);
+        } else {
+            return new Period(, now);
+        }
+    }
+\end{minted}
+Für jeden Objekttyp des Jira System soll eine Extraktorklasse implementiert werden. Dazu werden fünf Klassen (Projekt, Issuetype, Issue, Subtask, Comment) benötigt. Die in den Klassen definierten Methoden zur Extraktion der Objekte werden kaskadenartig aufgerufen ähnlich zum Muster eines Baumes.\\
+Die Methoden zur Extraktion, Transformation und Laden der Objekte sollen möglichst robust und fehlertolerant implementiert werden, um Ausnahmen im Extraktionsprozess behandeln zu können. Ein Ansatz zur besteht darin, Methoden erneut aufzurufen, falls eine Ausnahme bei ihrer Ausführung auftritt. Hierfür bietet das Quarkus Framework bereits die Annoation \glqq @Retry\grqq\:, welche uns ermöglicht, dieses Konzept auf eine Methode anzuwenden. Wir annotieren jede Methode die Für die Extraktion eines Objektes zuständig ist wie folgt. Unsere Methode wird vier mal erneut aufgerufen, falls eine Ausnahme auftritt:
+\begin{minted}{java}
+    @Retry(4)
+    public void extract(Project project) {
+        // Extract project here
+    }
+\end{minted}
+Projekte besitzen, im Gegensatz zu Tickets keine Update und Create Felder, welche es ermöglichen, Änderungen im Quellsystem zu erkennen und die geänderten Projekte gezielt zu extrahieren. Daher ist eine aufwändigere Delta-Erkennung notwendig, welche für jedes konfigurierte Projekt durchgeführt werden muss. Dabei wird bei jeder Extraktion der Name, die Beschreibung und der Schlüssel gegen das bereits in der Zieldatenbank befindliche Projekt verglichen. Ergibt diese Abgleich eine Änderung, so wird eine neue Version des Projektes in die Zieldatenbank geladen. Andernfalls erfolgt keine Aktion. In jedem Fall wird danach die Extraktion der Vorgänge durchgeführt.
+\subsubsection{Laden der Daten}
+Ein zentrales Problem beim Laden der Daten in unser Zielsystem ist die Erkennung von bereits zuvor extrahierten und geladenen Objekten. Um ein breits in das Zielsystem geladenes Objekt zu identifizieren, kann zunächst ein eindeutiger Schlüssel festgelegt werden. Stimmt dieser Schlüssel mit einem Objekt im Zielsystem überein, wurde dieses Objekt bereits geladen und ein Match wurde gefunden. Außerdem können jedoch Sachverhalte auftreten in welchen ein Schlüssel nicht ausreichend ist, um einen Sachverhalt mittels dem Vergleich einer Zeichenkette zwei Objekte als dasselbe zu identifizieren. In folge dessen ist ein ausführlicher Vergleich verschiedener Attribute der Objekte notwendig. Sind umfangreiche Freitextfelder wie z.B Beschreibungen vorhanden, können diese mittels Künstlicher Intelligenz verglichen werden, um möglicherweise einen Match zu erkennen. Bei einem Jira-Ticket sind können verschiedene Felder, wie z.B der Titel oder die Beschreibung eines Tickets für einen Vergleich herangezogen werden.
+\subsubsection{Ähnlichkeitserkennung}
+Wie bereits erwähnt sollen Mechanismen implementiert werden, die Erkennung ermöglichen, ob zwei Tickets den selben oder einen ähnlichen Sachverhalt beschreiben. Um die Ähnlichkeit zweier Tickets bestimmen zu können werden die Attribute Titel und Beschreibung verwendet. Um die Ähnlichkeitsbestimmung durchzuführen wird eine neue Klasse \glqq TicketComparator\grqq\: mit der statischen Methode \glqq public static double compare(Ticket ticket1, Ticket ticket2)\grqq\: angelegt. Der Rückgabewert der Methode ist eine Gleitkommazahl zwischen den Werten 0.0 und 1.0 und beschreibt, wie ähnlich sich zwei Tickets sind. Ein Wert von 0 legt fest, dass die Tickets keine Gemeinsamkeit aufweisen. Ein Wert von 1 sagt aus, dass die beiden Tickets als exakt identisch erkannt werden:
+\begin{minted}{java}
+    public double compare(Ticket ticket1, Ticket ticket2) {
+        final double titleSimilarity = compare(ticket1.getTitle(), ticket2.getTitle());
+        final double descriptionSimilarity = compare(ticket1.getDescription(), 
+            ticket2.getDescription());
+        return titleSimilarity * 0.3 + descriptionSimilarity * 0.7;
+    }
+\end{minted}
+%Welche Probleme treten bei der Ähnlichkeitserkennung auf?
+% - Wann wird diese durchgeführt? Wie verhält sich das mit der Versionierung?
+% - weitere recherche
+\subsubsection{Quellsystem}
+\subsubsection{Zielsystem}
+\subsection{}
+\section{Validierung und Prüfung}
+\section{Fazit und Ausblick}
+\section{Anhang}
+\newpage
+\include{literaturverzeichnis}
+\section*{Eidesstattliche Erklärung}
+Hiermit erkläre ich, dass ich die vorliegende Arbeit eigenständig und ohne fremde Hilfe angefertigt habe. Textpassagen, die wörtlich oder dem Sinn nach auf Publikationen oder Vorträgen anderer Autoren beruhen, sind als solche kenntlich gemacht. Die Arbeit wurde bisher keiner anderen Prüfungsbehörde vorgelegt und auch noch nicht veröffentlicht.\\\\
+Ingolstadt, 18.02.2025\\\\
+\includegraphics[scale=0.6]{dateien/unterschrift.png}\\
+Andreas Dinauer
+\end{document}
+
+% Validierung wie?
