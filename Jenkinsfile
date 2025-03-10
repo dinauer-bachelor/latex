@@ -7,5 +7,10 @@ pipeline {
                 sh 'pdflatex -shell-escape main.tex'
             }
         }
+        stage('Save artifact') {
+            steps {
+                archiveArtifacts 'main.txt'
+            }
+        }
     }
 }
