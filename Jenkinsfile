@@ -9,7 +9,7 @@ pipeline {
         }
         stage('Save artifact') {
             steps {
-                archiveArtifacts 'main.txt'
+                archiveArtifacts 'main.pdf'
             }
         }
     }
